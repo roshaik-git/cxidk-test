@@ -14,6 +14,8 @@
 
 """Base for other classes."""
 
+# pylint: disable=too-few-public-methods
+
 import logging
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
@@ -52,6 +54,7 @@ class Methods(StrEnum):
     GET = "get"
     POST = "post"
     DELETE = "delete"
+    PATCH = "patch"
 
 class Environments(StrEnum):
     """Enumeration of supported deployment environments."""
@@ -111,7 +114,7 @@ class Auth:
             self.scopes += scope
 
         if creds:
-            self.creds = creds
+            self.creds: Any = creds
             self.creds.refresh(auth_request())
             self.token = self.creds.token
 
@@ -359,31 +362,38 @@ class Request:
         self.location = location
         self.base_url = base_url or ""
 
-    def make( # pylint: disable=R0911
+    def make( # pylint: disable=R0911,R0912,R0913,R0917
         self,
         endpoint: str,
         method: str,
-        payload: Optional[Dict[str, str]],
+        payload: Optional[Dict[str, Any]],
         timeout: int = _DEFAULT_TIMEOUT,
-        headers: Optional[Dict[str, str]] = None
-    ) -> Optional[Dict[str, str]]:
+        headers: Optional[Dict[str, str]] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Makes an authenticated HTTP request to an API endpoint.
 
         Args:
             endpoint: The API endpoint to call.
-            method: The HTTP method to use (e.g., 'get', 'post').
+            method: The HTTP method to use (e.g., 'get', 'post', 'patch', 'delete').
             payload: A dictionary of parameters to include in the request body
                 or as URL parameters for GET requests.
             timeout: The request timeout in seconds.
             headers: Optional dictionary of custom request headers.
+            params: Optional dictionary of URL query parameters for POST/PATCH requests.
 
         Returns:
             The JSON response from the API as a dictionary, or an empty
             dictionary/None if the request fails or returns no content.
         """
-        endpoint =  self.base_url + endpoint
+        endpoint = self.base_url + endpoint
         if payload:
             payload = {k: v for k, v in payload.items() if v is not None}
+        clean_params = (
+            {k: v for k, v in params.items() if v is not None}
+            if params is not None
+            else None
+        )
         if headers is None:
             headers = {}
         if "Authorization" not in headers:
@@ -392,7 +402,7 @@ class Request:
         if method == Methods.GET:
             response = requests.get(
                 endpoint,
-                params=payload,
+                params=clean_params if clean_params is not None else payload,
                 headers=headers,
                 timeout=timeout,
             )
@@ -401,12 +411,27 @@ class Request:
             return {}
 
         if method == Methods.POST:
-            response= requests.post(
-                endpoint,
-                json=payload,
-                headers=headers,
-                timeout=timeout
-            )
+            post_kwargs: Dict[str, Any] = {
+                "json": payload,
+                "headers": headers,
+                "timeout": timeout,
+            }
+            if clean_params:
+                post_kwargs["params"] = clean_params
+            response = requests.post(endpoint, **post_kwargs)
+            if response.status_code == 200 and response.text:
+                return response.json()
+            return {}
+
+        if method == Methods.PATCH:
+            patch_kwargs: Dict[str, Any] = {
+                "json": payload,
+                "headers": headers,
+                "timeout": timeout,
+            }
+            if clean_params:
+                patch_kwargs["params"] = clean_params
+            response = requests.patch(endpoint, **patch_kwargs)
             if response.status_code == 200 and response.text:
                 return response.json()
             return {}

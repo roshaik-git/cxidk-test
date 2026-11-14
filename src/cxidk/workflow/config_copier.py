@@ -14,8 +14,10 @@
 
 """Workflow for copying QA Scorecards between GCP environments."""
 
+# pylint: disable=too-many-instance-attributes,too-few-public-methods,too-many-arguments,too-many-positional-arguments,cyclic-import
+
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from google.cloud.contact_center_insights_v1 import types
 from cxidk.core import base
 from cxidk.wrapper import insights
@@ -136,9 +138,10 @@ class ScorecardCopier:
         copied_questions_count = 0
         for q in source_questions_pager:
             clean_question = types.QaQuestion(
-                display_name=q.display_name,
+                abbreviation=getattr(q, "abbreviation", ""),
                 question_body=q.question_body,
-                answer_choice_config=q.answer_choice_config,
+                answer_instructions=getattr(q, "answer_instructions", ""),
+                answer_choices=getattr(q, "answer_choices", []),
                 tags=q.tags,
                 order=q.order,
             )
@@ -155,3 +158,14 @@ class ScorecardCopier:
             "dest_scorecard_id": dest_scorecard_id,
             "copied_questions_count": copied_questions_count,
         }
+
+
+# Re-export DashboardCopier workflows for unified ConfigOps imports.
+# pylint: disable=wrong-import-position,unused-import
+from cxidk.workflow.dashboard_copier import (  # noqa: E402,F401
+    BigQueryMvSqlLinter,
+    DashboardCopier,
+    DashboardPromotionReport,
+    DashboardTileBuilder,
+    SqlLintFinding,
+)

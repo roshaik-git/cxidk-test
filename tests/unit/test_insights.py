@@ -36,6 +36,9 @@ from cxidk.wrapper.insights import (
     AuthorizedViews,
     Scorecards,
     ScorecardQuestions,
+    Dashboards,
+    AutoLabelingRules,
+    AnalysisRules,
     Annotators,
     Mediums,
     AgentType,
@@ -116,11 +119,15 @@ def mock_randint(mocker: MockerFixture) -> MagicMock:
 @pytest.fixture
 def mock_timestamp(mocker: MockerFixture) -> MagicMock:
     """Mocks google.protobuf.timestamp_pb2.Timestamp."""
+    import datetime  # pylint: disable=import-outside-toplevel
 
     mock_ts_class = mocker.patch("cxidk.wrapper.insights.Timestamp")
-    mock_instance = mock_ts_class.return_value
+    mock_instance = MagicMock()
+    mock_instance.__class__ = datetime.datetime  # type: ignore[assignment]
+    mock_instance.tzinfo = None
     mock_instance.utctimetuple.return_value = time.gmtime(1678886400)
     mock_instance.microsecond = 123456
+    mock_ts_class.return_value = mock_instance
     return mock_ts_class
 
 
@@ -620,7 +627,7 @@ class TestScorecardQuestions:
 
     def test_create_question(self, questions_wrapper: ScorecardQuestions) -> None:
         """Test creating a question."""
-        mock_question = types.QaQuestion(display_name="Native Q1")
+        mock_question = types.QaQuestion(abbreviation="Native Q1")
         questions_wrapper.create_question(
             qa_question=mock_question, qa_question_id="q-123"
         )
@@ -652,3 +659,190 @@ class TestScorecardQuestions:
         questions_wrapper.client.delete_qa_question.assert_called_once_with(
             name=expected_name
         )
+
+
+# --- Test Class for Dashboards ---
+
+
+class TestDashboards:
+    """Tests for the Dashboards REST wrapper class."""
+
+    @pytest.fixture
+    def mock_request_cls(self, mocker: MockerFixture) -> MagicMock:
+        """Mocks cxidk.wrapper.insights.base.Request."""
+        return mocker.patch("cxidk.wrapper.insights.base.Request", autospec=True)
+
+    def test_init_with_project_and_location(
+        self, mock_request_cls: MagicMock
+    ) -> None:
+        """Test Dashboards initialization with project_id and location."""
+        dashboards = Dashboards(project_id=PROJECT_ID, location=LOCATION)
+        assert dashboards.project_id == PROJECT_ID
+        assert dashboards.location == LOCATION
+        assert dashboards.parent == PARENT
+        mock_request_cls.assert_called_once()
+
+    def test_init_with_parent(self, mock_request_cls: MagicMock) -> None:
+        """Test Dashboards initialization with parent string."""
+        dashboards = Dashboards(parent=PARENT)
+        assert dashboards.project_id == PROJECT_ID
+        assert dashboards.location == LOCATION
+        assert dashboards.parent == PARENT
+
+    def test_init_invalid_raises(self) -> None:
+        """Test Dashboards initialization raises ValueError on missing args."""
+        with pytest.raises(ValueError):
+            Dashboards()
+        with pytest.raises(ValueError):
+            Dashboards(parent="invalid/parent")
+
+    def test_crud_operations(self, mock_request_cls: MagicMock) -> None:
+        """Test create, get, list, update, and delete dashboard methods."""
+        dashboards = Dashboards(project_id=PROJECT_ID, location=LOCATION)
+        mock_req = mock_request_cls.return_value
+
+        mock_req.make.return_value = {"name": f"{PARENT}/dashboards/d-1"}
+        created = dashboards.create_dashboard(
+            dashboard={"displayName": "My Dash"}, dashboard_id="d-1"
+        )
+        assert created == {"name": f"{PARENT}/dashboards/d-1"}
+        mock_req.make.assert_called_with(
+            endpoint="dashboards",
+            method=base.Methods.POST,
+            payload={"displayName": "My Dash"},
+            params={"dashboardId": "d-1"},
+        )
+
+        dashboards.get_dashboard(f"{PARENT}/dashboards/d-1")
+        mock_req.make.assert_called_with(
+            endpoint="dashboards/d-1",
+            method=base.Methods.GET,
+            payload=None,
+            params=None,
+        )
+
+        dashboards.list_dashboards(page_size=25)
+        mock_req.make.assert_called_with(
+            endpoint="dashboards",
+            method=base.Methods.GET,
+            payload={"pageSize": 25},
+            params=None,
+        )
+
+        dashboards.update_dashboard(
+            dashboard_id="d-1",
+            dashboard={"displayName": "Updated"},
+            update_mask="displayName",
+        )
+        mock_req.make.assert_called_with(
+            endpoint="dashboards/d-1",
+            method=base.Methods.PATCH,
+            payload={"displayName": "Updated"},
+            params={"updateMask": "displayName"},
+        )
+
+        dashboards.delete_dashboard("d-1")
+        mock_req.make.assert_called_with(
+            endpoint="dashboards/d-1",
+            method=base.Methods.DELETE,
+            payload={},
+            params=None,
+        )
+
+
+# --- Test Class for AutoLabelingRules and AnalysisRules ---
+
+
+class TestAutoLabelingAndAnalysisRules:
+    """Tests for AutoLabelingRules and AnalysisRules wrapper classes."""
+
+    @pytest.fixture
+    def mock_request_cls(self, mocker: MockerFixture) -> MagicMock:
+        """Mocks cxidk.wrapper.insights.base.Request."""
+        return mocker.patch("cxidk.wrapper.insights.base.Request", autospec=True)
+
+    def test_auto_labeling_rules_crud_and_test(
+        self, mock_request_cls: MagicMock
+    ) -> None:
+        """Test AutoLabelingRules CRUD and :test dry-run endpoint."""
+        rules = AutoLabelingRules(project_id=PROJECT_ID, location=LOCATION)
+        mock_req = mock_request_cls.return_value
+        mock_req.make.return_value = {"name": f"{PARENT}/autoLabelingRules/r-1"}
+
+        rule_payload = {
+            "displayName": "Test Rule",
+            "labelKey": "tier",
+            "conditions": [{"condition": "", "value": '"vip"'}],
+        }
+        rules.create_rule(rule=rule_payload, rule_id="r-1")
+        mock_req.make.assert_called_with(
+            endpoint="autoLabelingRules",
+            method=base.Methods.POST,
+            payload=rule_payload,
+            params={"autoLabelingRuleId": "r-1"},
+        )
+
+        rules.get_rule(f"{PARENT}/autoLabelingRules/r-1")
+        mock_req.make.assert_called_with(
+            endpoint="autoLabelingRules/r-1",
+            method=base.Methods.GET,
+            payload=None,
+            params=None,
+        )
+
+        rules.list_rules(page_size=10, filter_str="active = true")
+        mock_req.make.assert_called_with(
+            endpoint="autoLabelingRules",
+            method=base.Methods.GET,
+            payload={"pageSize": 10, "filter": "active = true"},
+            params=None,
+        )
+
+        rules.update_rule("r-1", rule_payload, update_mask="conditions")
+        mock_req.make.assert_called_with(
+            endpoint="autoLabelingRules/r-1",
+            method=base.Methods.PATCH,
+            payload=rule_payload,
+            params={"updateMask": "conditions"},
+        )
+
+        rules.test_rule(rule=rule_payload, filter_str='agent_id = "a1"', page_size=5)
+        mock_req.make.assert_called_with(
+            endpoint="autoLabelingRules:test",
+            method=base.Methods.POST,
+            payload={
+                "autoLabelingRule": rule_payload,
+                "filter": 'agent_id = "a1"',
+                "pageSize": 5,
+            },
+            params=None,
+        )
+
+        rules.delete_rule("r-1")
+        mock_req.make.assert_called_with(
+            endpoint="autoLabelingRules/r-1",
+            method=base.Methods.DELETE,
+            payload={},
+            params=None,
+        )
+
+    def test_analysis_rules_crud(self, mock_request_cls: MagicMock) -> None:
+        """Test AnalysisRules CRUD methods."""
+        analysis_rules = AnalysisRules(parent=PARENT)
+        mock_req = mock_request_cls.return_value
+        mock_req.make.return_value = {"name": f"{PARENT}/analysisRules/ar-1"}
+
+        payload = {"displayName": "Analyze 100%", "analysisPercentage": 1.0}
+        analysis_rules.create_rule(rule=payload, rule_id="ar-1")
+        mock_req.make.assert_called_with(
+            endpoint="analysisRules",
+            method=base.Methods.POST,
+            payload=payload,
+            params={"analysisRuleId": "ar-1"},
+        )
+
+        analysis_rules.get_rule("ar-1")
+        analysis_rules.list_rules(page_size=20)
+        analysis_rules.update_rule("ar-1", payload, update_mask="active")
+        analysis_rules.delete_rule("ar-1")
+        assert mock_req.make.call_count == 5

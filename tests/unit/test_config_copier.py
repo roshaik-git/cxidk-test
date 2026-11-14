@@ -14,6 +14,8 @@
 
 """Unit tests for the ScorecardCopier workflow class."""
 
+# pylint: disable=redefined-outer-name
+
 from unittest.mock import MagicMock
 import pytest
 from google.cloud.contact_center_insights_v1 import types
@@ -50,12 +52,12 @@ def mock_wrappers(mocker: MockerFixture) -> MagicMock:
     # Setup source questions pager return
     mock_question_1 = types.QaQuestion(
         name="projects/src-proj/locations/us/qaScorecards/sc-src/qaQuestions/q1",
-        display_name="Q1",
+        abbreviation="Q1",
         question_body="Body 1",
     )
     mock_question_2 = types.QaQuestion(
         name="projects/src-proj/locations/us/qaScorecards/sc-src/qaQuestions/q2",
-        display_name="Q2",
+        abbreviation="Q2",
         question_body="Body 2",
     )
     mock_questions_cls.return_value.list_questions.return_value = [

@@ -42,6 +42,8 @@ The DevKit empowers you to perform a wide range of actions efficiently, includin
 *   Configure BigQuery exports for conversational insights data.
 *   Modify global Conversational Insights settings.
 *   Transform transcript data formats from various vendors (e.g., Genesys Cloud, AWS) to Insights-compatible formats.
+*   **Dashboard Management, `Dev → Prod` Promotion & Predefined Dashboard Cloner (`Dashboards`, `DashboardCopier`, `DashboardTileBuilder`, `BigQueryMvSqlLinter`)**: Create, list, update, and delete CCAI Insights dashboards, promote custom dashboards across GCP environments with automatic `qa_scorecard_id`, `qa_question_id`, and `agent_id` SQL/filter remapping and `chartCheckpoint` detachment, and clone `readOnly: true` predefined dashboards into Edit Mode (`readOnly: false`).
+*   **Natural-Language-to-CEL Auto-Labeling Rules & `:test` Dry-Run Evaluation (`AutoLabelingRules`, `AnalysisRules`, `CelRuleGenerator`, `AutoLabelingPromoter`)**: Compile plain-English labeling requirements into schema-verified `kJson` (`lowerCamelCase`) CEL expressions with mandatory `has(...)` presence guards, dry-run evaluate rules via `:test`, and promote rules across environments.
 *   ...and much more, streamlining your conversational AI workflows!
 
 ## Built With
@@ -221,7 +223,78 @@ print("AWS transcript converted successfully.")
 # The 'aws_transcript' variable now holds the Insights-compatible data
 ```
 
-For more end-to-end examples, refer to the integration tests located under `/tests/integration/test_ingestion.py`.
+## Promoting Custom Dashboards (`Dev → Prod`) & Duplicating Predefined Dashboards into Edit Mode
+Promote custom dashboards across GCP projects with automatic `qa_scorecard_id` and `qa_question_id` SQL remapping, or unlock Edit Mode on any `readOnly: true` predefined dashboard:
+
+```python
+from cxidk.workflow.dashboard_copier import (
+    BigQueryMvSqlLinter,
+    DashboardCopier,
+    DashboardTileBuilder,
+)
+
+# Initialize DashboardCopier between dev and prod environments
+copier = DashboardCopier(
+    source_project_id="my-ccai-dev-project",
+    dest_project_id="my-ccai-prod-project",
+    source_location="us-central1",
+    dest_location="us-central1",
+)
+
+# 1. Promote a custom dashboard from dev -> prod with automatic Scorecard/Question UUID remapping
+promoted_dash, report = copier.copy_dashboard(
+    source_dashboard_id="executive-qa-dashboard-dev",
+    new_display_name="Executive QA & Subagent Containment",
+    promote_linked_scorecards=True,
+    upsert=True,
+)
+print(f"Dashboard {report.action}: {report.target_dashboard_name}")
+
+# 2. Duplicate a readOnly predefined dashboard into Edit Mode (readOnly=False) and add custom tiles
+custom_tile = DashboardTileBuilder.build_bar_or_line_widget(
+    display_name="Subagent Tool Failure Rate",
+    sql_query=(
+        "SELECT JSON_VALUE(labels, '$.routed_subagent') AS subagent, "
+        "COUNT(*) AS conversations FROM conversations "
+        "WHERE ${insights_metrics_date_range} GROUP BY subagent"
+    ),
+    x_field="subagent",
+    y_field="conversations",
+    filter_column="labels.routed_subagent",
+)
+editable_dash, clone_report = copier.clone_predefined_to_editable(
+    predefined_dashboard_id="supervisor_agent_dashboard",
+    new_display_name="Supervisor Overview (Editable Custom Copy)",
+    extra_widgets=[custom_tile],
+)
+```
+
+## Compiling Plain-English Queries to `kJson` (`lowerCamelCase`) CEL Auto-Labeling Rules
+Generate schema-verified CEL auto-labeling rules from simple English descriptions and dry-run test them via `:test` before activating in production:
+
+```python
+from cxidk.workflow.auto_labeling import CelRuleGenerator, AutoLabelingPromoter
+from cxidk.wrapper.insights import AutoLabelingRules
+
+generator = CelRuleGenerator(project_id="my-ccai-dev-project", location="us-central1")
+
+# 1. Compile plain English into lowerCamelCase CEL with defensive has() guards
+compiled_rule = generator.from_english(
+    english_prompt=(
+        "Set to 'true' when the conversation was transferred to subagent "
+        "'billing_specialist' and any tool call returned an error."
+    ),
+    label_key="billing_tool_failure",
+)
+
+# 2. Dry-run evaluate via POST /v1main/{parent}/autoLabelingRules:test
+dry_run_report = generator.dry_run_test_rule(compiled_rule, page_size=50)
+if dry_run_report.passed_zero_error_gate:
+    rules_client = AutoLabelingRules(project_id="my-ccai-dev-project", location="us-central1")
+    rules_client.create_rule(rule=compiled_rule.to_api_dict())
+```
+
+For more end-to-end examples, refer to the integration tests located under `/tests/integration/test_ingestion.py` and the notebooks in `/examples/`.
 
 # Contributing
 We welcome contributions, bug reports, and feature requests! Please follow these steps to contribute:

@@ -19,7 +19,7 @@ Contact Center AI Insights API. It includes classes for managing settings,
 ingesting conversation data, performing analysis, exporting data, and managing
 authorized views.
 """
-# pylint: disable=too-many-lines
+# pylint: disable=too-many-lines,too-many-instance-attributes,too-many-arguments,too-many-positional-arguments,too-few-public-methods
 import enum
 from random import randint
 from typing import Dict, MutableMapping, Optional, List, Any
@@ -1202,3 +1202,714 @@ class ScorecardQuestions:
         """
         name = f"{self.parent}/qaQuestions/{question_id}"
         self.client.delete_qa_question(name=name)
+
+
+def _resolve_parent_and_location(
+    project_id: Optional[str] = None,
+    location: Optional[str] = None,
+    parent: Optional[str] = None,
+) -> tuple[str, str, str]:
+    """Resolves project_id, location, and parent resource path.
+
+    Args:
+        project_id: Optional Google Cloud project ID.
+        location: Optional Google Cloud location (e.g., 'us-central1' or 'global').
+        parent: Optional full parent resource path ('projects/<p>/locations/<l>').
+
+    Returns:
+        A tuple of (project_id, location, parent).
+
+    Raises:
+        ValueError: If neither (project_id and location) nor a valid parent is given.
+    """
+    if parent:
+        parts = parent.strip("/").split("/")
+        if len(parts) < 4 or parts[0] != "projects" or parts[2] != "locations":
+            raise ValueError(
+                f"Invalid parent resource format: '{parent}'. "
+                "Expected 'projects/<project_id>/locations/<location>'."
+            )
+        resolved_project = parts[1]
+        resolved_location = parts[3]
+        resolved_parent = f"projects/{resolved_project}/locations/{resolved_location}"
+        return resolved_project, resolved_location, resolved_parent
+
+    if project_id and location:
+        resolved_parent = f"projects/{project_id}/locations/{location}"
+        return project_id, location, resolved_parent
+
+    raise ValueError(
+        "Either 'parent' or both 'project_id' and 'location' must be provided."
+    )
+
+
+def _resolve_insights_base_url(
+    config: base.Config,
+    parent: str,
+    api_version: str,
+) -> str:
+    """Constructs the REST base URL for Contact Center AI Insights resources.
+
+    Args:
+        config: The cxidk base.Config instance.
+        parent: The parent resource path ('projects/<p>/locations/<l>').
+        api_version: The REST API version ('v1main' or 'v1').
+
+    Returns:
+        The formatted base URL string ending with a trailing slash.
+    """
+    api_host = "contactcenterinsights.googleapis.com"
+    endpoint_options = config.set_insights_endpoint()
+    if endpoint_options and isinstance(endpoint_options.api_endpoint, str):
+        api_host = endpoint_options.api_endpoint
+    return f"https://{api_host}/{api_version}/{parent}/"
+
+
+class Dashboards:  # pylint: disable=too-many-instance-attributes
+    """Manages custom and predefined dashboards in Contact Center AI Insights.
+
+    This class provides a Pythonic interface to create, retrieve, list, update,
+    and delete Contact Center AI Insights `Dashboard` resources via the
+    HTTP/JSON REST API (`projects/{project}/locations/{location}/dashboards`).
+
+    Attributes:
+        project_id: The Google Cloud project ID.
+        location: The Google Cloud location (e.g., 'us-central1' or 'global').
+        parent: The parent resource name ('projects/{project}/locations/{location}').
+        api_version: The Insights REST API version (defaults to 'v1main').
+    """
+
+    def __init__(  # pylint: disable=R0913,R0917
+        self,
+        project_id: Optional[str] = None,
+        location: Optional[str] = None,
+        parent: Optional[str] = None,
+        api_version: str = "v1main",
+        auth: Optional[base.Auth] = None,
+        config: Optional[base.Config] = None,
+    ) -> None:
+        """Initializes the Dashboards client.
+
+        Args:
+            project_id: Optional Google Cloud project ID.
+            location: Optional Google Cloud location.
+            parent: Optional parent resource name ('projects/p/locations/l').
+            api_version: The REST API version ('v1main' or 'v1').
+            auth: An optional, pre-configured authentication object.
+            config: An optional, pre-configured configuration object.
+        """
+        self.project_id, self.location, self.parent = _resolve_parent_and_location(
+            project_id=project_id,
+            location=location,
+            parent=parent,
+        )
+        self.api_version = api_version
+        self.auth = auth or base.Auth()
+        self.config = config or base.Config()
+        self._dashboards_endpoint = "dashboards"
+
+        self.request = base.Request(
+            project_id=self.project_id,
+            location=self.location,
+            auth=self.auth,
+            config=self.config,
+            base_url=_resolve_insights_base_url(
+                config=self.config,
+                parent=self.parent,
+                api_version=self.api_version,
+            ),
+        )
+
+    def _normalize_dashboard_id(self, dashboard_id: str) -> str:
+        """Extracts the short dashboard ID from a full resource name or ID string."""
+        prefix = f"{self.parent}/{self._dashboards_endpoint}/"
+        if dashboard_id.startswith(prefix):
+            return dashboard_id[len(prefix):]
+        if "/" in dashboard_id:
+            return dashboard_id.rsplit("/", maxsplit=1)[-1]
+        return dashboard_id
+
+    def _make_request(
+        self,
+        endpoint: str,
+        method: str,
+        payload: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Executes a REST request against the Dashboards endpoint."""
+        response = self.request.make(
+            endpoint=endpoint,
+            method=method,
+            payload=payload,
+            params=params,
+        )
+        return response if response else None
+
+    def create_dashboard(
+        self,
+        dashboard: Dict[str, Any],
+        dashboard_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Creates a new custom dashboard in Contact Center AI Insights.
+
+        Dashboards created via `create_dashboard` are persisted in Spanner with
+        `readOnly: false` (Edit Mode enabled in the CCAI Insights Console).
+
+        Args:
+            dashboard: A dictionary representing the `Dashboard` resource payload
+                (including `displayName`, `rootContainer`, and optional `filter`).
+            dashboard_id: Optional user-specified ID for the dashboard.
+
+        Returns:
+            A dictionary representing the created `Dashboard` resource.
+        """
+        params = {"dashboardId": dashboard_id} if dashboard_id else None
+        return self._make_request(
+            endpoint=self._dashboards_endpoint,
+            method=base.Methods.POST,
+            payload=dashboard,
+            params=params,
+        )
+
+    def get_dashboard(
+        self,
+        dashboard_id: str,
+        params: Optional[Dict[str, str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieves a specific predefined or custom dashboard by its ID.
+
+        Args:
+            dashboard_id: The short ID (e.g., 'virtual_agent_dashboard') or full
+                resource name of the dashboard.
+            params: Optional query parameters to include in the request.
+
+        Returns:
+            A dictionary representing the `Dashboard` resource.
+        """
+        short_id = self._normalize_dashboard_id(dashboard_id)
+        endpoint = f"{self._dashboards_endpoint}/{short_id}"
+        return self._make_request(
+            endpoint=endpoint,
+            method=base.Methods.GET,
+            payload=params,
+        )
+
+    def list_dashboards(
+        self,
+        page_size: Optional[int] = None,
+        page_token: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Lists all predefined and custom dashboards in the project/location.
+
+        Args:
+            page_size: Optional maximum number of dashboards to return.
+            page_token: Optional pagination token from a previous list call.
+            params: Optional additional query parameters.
+
+        Returns:
+            A dictionary containing `'dashboards'` and optional `'nextPageToken'`.
+        """
+        query_params: Dict[str, Any] = dict(params) if params else {}
+        if page_size is not None:
+            query_params["pageSize"] = page_size
+        if page_token is not None:
+            query_params["pageToken"] = page_token
+        return self._make_request(
+            endpoint=self._dashboards_endpoint,
+            method=base.Methods.GET,
+            payload=query_params,
+        )
+
+    def update_dashboard(
+        self,
+        dashboard_id: str,
+        dashboard: Dict[str, Any],
+        update_mask: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Updates an existing custom dashboard.
+
+        Args:
+            dashboard_id: The ID or resource name of the dashboard to update.
+            dashboard: The updated `Dashboard` resource dictionary.
+            update_mask: Optional comma-separated field mask in camelCase
+                (e.g., 'displayName,description,filter,rootContainer').
+
+        Returns:
+            A dictionary representing the updated `Dashboard` resource.
+        """
+        short_id = self._normalize_dashboard_id(dashboard_id)
+        endpoint = f"{self._dashboards_endpoint}/{short_id}"
+        params = {"updateMask": update_mask} if update_mask else None
+        return self._make_request(
+            endpoint=endpoint,
+            method=base.Methods.PATCH,
+            payload=dashboard,
+            params=params,
+        )
+
+    def delete_dashboard(
+        self,
+        dashboard_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Deletes a specific custom dashboard.
+
+        Args:
+            dashboard_id: The ID or resource name of the dashboard to delete.
+
+        Returns:
+            An empty dictionary or response payload upon successful deletion.
+        """
+        short_id = self._normalize_dashboard_id(dashboard_id)
+        endpoint = f"{self._dashboards_endpoint}/{short_id}"
+        return self._make_request(
+            endpoint=endpoint,
+            method=base.Methods.DELETE,
+            payload={},
+        )
+
+
+class AutoLabelingRules:  # pylint: disable=too-many-instance-attributes
+    """Manages CEL-based Auto-Labeling Rules in Contact Center AI Insights.
+
+    This class provides methods to create, retrieve, list, update, delete, and
+    dry-run test `AutoLabelingRule` resources using the Insights REST API
+    (`projects/{project}/locations/{location}/autoLabelingRules`).
+
+    Attributes:
+        project_id: The Google Cloud project ID.
+        location: The Google Cloud location.
+        parent: The parent resource name.
+        api_version: The Insights REST API version (defaults to 'v1main').
+    """
+
+    def __init__(  # pylint: disable=R0913,R0917
+        self,
+        project_id: Optional[str] = None,
+        location: Optional[str] = None,
+        parent: Optional[str] = None,
+        api_version: str = "v1main",
+        auth: Optional[base.Auth] = None,
+        config: Optional[base.Config] = None,
+    ) -> None:
+        """Initializes the AutoLabelingRules client.
+
+        Args:
+            project_id: Optional Google Cloud project ID.
+            location: Optional Google Cloud location.
+            parent: Optional parent resource name ('projects/p/locations/l').
+            api_version: The REST API version ('v1main' or 'v1').
+            auth: An optional, pre-configured authentication object.
+            config: An optional, pre-configured configuration object.
+        """
+        self.project_id, self.location, self.parent = _resolve_parent_and_location(
+            project_id=project_id,
+            location=location,
+            parent=parent,
+        )
+        self.api_version = api_version
+        self.auth = auth or base.Auth()
+        self.config = config or base.Config()
+        self._rules_endpoint = "autoLabelingRules"
+
+        self.request = base.Request(
+            project_id=self.project_id,
+            location=self.location,
+            auth=self.auth,
+            config=self.config,
+            base_url=_resolve_insights_base_url(
+                config=self.config,
+                parent=self.parent,
+                api_version=self.api_version,
+            ),
+        )
+
+    def _normalize_rule_id(self, rule_id: str) -> str:
+        """Extracts the short rule ID from a full resource name or ID string."""
+        prefix = f"{self.parent}/{self._rules_endpoint}/"
+        if rule_id.startswith(prefix):
+            return rule_id[len(prefix):]
+        if "/" in rule_id:
+            return rule_id.rsplit("/", maxsplit=1)[-1]
+        return rule_id
+
+    def _make_request(
+        self,
+        endpoint: str,
+        method: str,
+        payload: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Executes a REST request against the AutoLabelingRules endpoint."""
+        response = self.request.make(
+            endpoint=endpoint,
+            method=method,
+            payload=payload,
+            params=params,
+        )
+        return response if response else None
+
+    def create_rule(
+        self,
+        rule: Dict[str, Any],
+        rule_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Creates a new CEL-based auto-labeling rule.
+
+        Args:
+            rule: A dictionary representing the `AutoLabelingRule` resource
+                (e.g., `displayName`, `labelKey`, `conditions`, `active`).
+            rule_id: Optional user-specified ID for the rule.
+
+        Returns:
+            A dictionary representing the created `AutoLabelingRule` resource.
+        """
+        params = {"autoLabelingRuleId": rule_id} if rule_id else None
+        return self._make_request(
+            endpoint=self._rules_endpoint,
+            method=base.Methods.POST,
+            payload=rule,
+            params=params,
+        )
+
+    def get_rule(
+        self,
+        rule_id: str,
+        params: Optional[Dict[str, str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieves a specific auto-labeling rule by its ID.
+
+        Args:
+            rule_id: The short ID or full resource name of the rule.
+            params: Optional query parameters.
+
+        Returns:
+            A dictionary representing the `AutoLabelingRule` resource.
+        """
+        short_id = self._normalize_rule_id(rule_id)
+        endpoint = f"{self._rules_endpoint}/{short_id}"
+        return self._make_request(
+            endpoint=endpoint,
+            method=base.Methods.GET,
+            payload=params,
+        )
+
+    def list_rules(
+        self,
+        page_size: Optional[int] = None,
+        page_token: Optional[str] = None,
+        filter_str: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Lists all auto-labeling rules in the project/location.
+
+        Args:
+            page_size: Optional maximum number of rules to return.
+            page_token: Optional pagination token.
+            filter_str: Optional filter expression (e.g., 'active = true').
+            params: Optional additional query parameters.
+
+        Returns:
+            A dictionary containing `'autoLabelingRules'` and `'nextPageToken'`.
+        """
+        query_params: Dict[str, Any] = dict(params) if params else {}
+        if page_size is not None:
+            query_params["pageSize"] = page_size
+        if page_token is not None:
+            query_params["pageToken"] = page_token
+        if filter_str is not None:
+            query_params["filter"] = filter_str
+        return self._make_request(
+            endpoint=self._rules_endpoint,
+            method=base.Methods.GET,
+            payload=query_params,
+        )
+
+    def update_rule(
+        self,
+        rule_id: str,
+        rule: Dict[str, Any],
+        update_mask: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Updates an existing auto-labeling rule.
+
+        Args:
+            rule_id: The ID or resource name of the rule to update.
+            rule: The updated `AutoLabelingRule` dictionary.
+            update_mask: Optional comma-separated field mask in camelCase
+                (e.g., 'displayName,description,conditions,active').
+
+        Returns:
+            A dictionary representing the updated `AutoLabelingRule` resource.
+        """
+        short_id = self._normalize_rule_id(rule_id)
+        endpoint = f"{self._rules_endpoint}/{short_id}"
+        params = {"updateMask": update_mask} if update_mask else None
+        return self._make_request(
+            endpoint=endpoint,
+            method=base.Methods.PATCH,
+            payload=rule,
+            params=params,
+        )
+
+    def delete_rule(
+        self,
+        rule_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Deletes a specific auto-labeling rule.
+
+        Args:
+            rule_id: The ID or resource name of the rule to delete.
+
+        Returns:
+            An empty dictionary or response payload upon successful deletion.
+        """
+        short_id = self._normalize_rule_id(rule_id)
+        endpoint = f"{self._rules_endpoint}/{short_id}"
+        return self._make_request(
+            endpoint=endpoint,
+            method=base.Methods.DELETE,
+            payload={},
+        )
+
+    def test_rule(
+        self,
+        rule: Dict[str, Any],
+        filter_str: Optional[str] = None,
+        conversations: Optional[List[Dict[str, Any]]] = None,
+        page_size: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Dry-run tests an auto-labeling rule against conversations (`:test`).
+
+        Calls `POST /{api_version}/{parent}/autoLabelingRules:test` to evaluate
+        CEL `condition` and `value` expressions in `kJson` (`lowerCamelCase`)
+        format without mutating stored conversation labels.
+
+        Args:
+            rule: The `AutoLabelingRule` dictionary containing `labelKey` and
+                `conditions` (`[{"condition": ..., "value": ...}]`).
+            filter_str: Optional Insights conversation filter string to sample
+                project conversations (mutually exclusive with `conversations`).
+            conversations: Optional list of inline `Conversation` dictionaries
+                for hermetic/synthetic dry-run testing.
+            page_size: Optional maximum number of conversations to evaluate.
+
+        Returns:
+            A dictionary containing `testResults` and `labelValueCount` from
+            `TestAutoLabelingRuleResponse`.
+        """
+        payload: Dict[str, Any] = {"autoLabelingRule": rule}
+        if conversations is not None:
+            payload["conversations"] = {"conversations": conversations}
+        elif filter_str is not None:
+            payload["filter"] = filter_str
+        if page_size is not None:
+            payload["pageSize"] = page_size
+
+        endpoint = f"{self._rules_endpoint}:test"
+        return self._make_request(
+            endpoint=endpoint,
+            method=base.Methods.POST,
+            payload=payload,
+        )
+
+
+class AnalysisRules:  # pylint: disable=too-many-instance-attributes
+    """Manages Analysis Rules in Contact Center AI Insights.
+
+    This class provides methods to create, retrieve, list, update, and delete
+    `AnalysisRule` resources (`projects/{project}/locations/{location}/analysisRules`)
+    that configure automatic post-ingestion conversation analysis.
+
+    Attributes:
+        project_id: The Google Cloud project ID.
+        location: The Google Cloud location.
+        parent: The parent resource name.
+        api_version: The Insights REST API version (defaults to 'v1').
+    """
+
+    def __init__(  # pylint: disable=R0913,R0917
+        self,
+        project_id: Optional[str] = None,
+        location: Optional[str] = None,
+        parent: Optional[str] = None,
+        api_version: str = "v1",
+        auth: Optional[base.Auth] = None,
+        config: Optional[base.Config] = None,
+    ) -> None:
+        """Initializes the AnalysisRules client.
+
+        Args:
+            project_id: Optional Google Cloud project ID.
+            location: Optional Google Cloud location.
+            parent: Optional parent resource name ('projects/p/locations/l').
+            api_version: The REST API version (defaults to 'v1').
+            auth: An optional, pre-configured authentication object.
+            config: An optional, pre-configured configuration object.
+        """
+        self.project_id, self.location, self.parent = _resolve_parent_and_location(
+            project_id=project_id,
+            location=location,
+            parent=parent,
+        )
+        self.api_version = api_version
+        self.auth = auth or base.Auth()
+        self.config = config or base.Config()
+        self._rules_endpoint = "analysisRules"
+
+        self.request = base.Request(
+            project_id=self.project_id,
+            location=self.location,
+            auth=self.auth,
+            config=self.config,
+            base_url=_resolve_insights_base_url(
+                config=self.config,
+                parent=self.parent,
+                api_version=self.api_version,
+            ),
+        )
+
+    def _normalize_rule_id(self, rule_id: str) -> str:
+        """Extracts the short analysis rule ID from a full resource name or ID."""
+        prefix = f"{self.parent}/{self._rules_endpoint}/"
+        if rule_id.startswith(prefix):
+            return rule_id[len(prefix):]
+        if "/" in rule_id:
+            return rule_id.rsplit("/", maxsplit=1)[-1]
+        return rule_id
+
+    def _make_request(
+        self,
+        endpoint: str,
+        method: str,
+        payload: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Executes a REST request against the AnalysisRules endpoint."""
+        response = self.request.make(
+            endpoint=endpoint,
+            method=method,
+            payload=payload,
+            params=params,
+        )
+        return response if response else None
+
+    def create_rule(
+        self,
+        rule: Dict[str, Any],
+        rule_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Creates a new analysis rule.
+
+        Args:
+            rule: A dictionary representing the `AnalysisRule` resource
+                (`displayName`, `conversationFilter`, `annotatorSelector`,
+                `analysisPercentage`, `active`).
+            rule_id: Optional user-specified ID for the analysis rule.
+
+        Returns:
+            A dictionary representing the created `AnalysisRule` resource.
+        """
+        params = {"analysisRuleId": rule_id} if rule_id else None
+        return self._make_request(
+            endpoint=self._rules_endpoint,
+            method=base.Methods.POST,
+            payload=rule,
+            params=params,
+        )
+
+    def get_rule(
+        self,
+        rule_id: str,
+        params: Optional[Dict[str, str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieves a specific analysis rule by its ID.
+
+        Args:
+            rule_id: The short ID or full resource name of the analysis rule.
+            params: Optional query parameters.
+
+        Returns:
+            A dictionary representing the `AnalysisRule` resource.
+        """
+        short_id = self._normalize_rule_id(rule_id)
+        endpoint = f"{self._rules_endpoint}/{short_id}"
+        return self._make_request(
+            endpoint=endpoint,
+            method=base.Methods.GET,
+            payload=params,
+        )
+
+    def list_rules(
+        self,
+        page_size: Optional[int] = None,
+        page_token: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Lists all analysis rules in the project/location.
+
+        Args:
+            page_size: Optional maximum number of rules to return.
+            page_token: Optional pagination token.
+            params: Optional additional query parameters.
+
+        Returns:
+            A dictionary containing `'analysisRules'` and `'nextPageToken'`.
+        """
+        query_params: Dict[str, Any] = dict(params) if params else {}
+        if page_size is not None:
+            query_params["pageSize"] = page_size
+        if page_token is not None:
+            query_params["pageToken"] = page_token
+        return self._make_request(
+            endpoint=self._rules_endpoint,
+            method=base.Methods.GET,
+            payload=query_params,
+        )
+
+    def update_rule(
+        self,
+        rule_id: str,
+        rule: Dict[str, Any],
+        update_mask: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Updates an existing analysis rule.
+
+        Args:
+            rule_id: The ID or resource name of the analysis rule to update.
+            rule: The updated `AnalysisRule` dictionary.
+            update_mask: Optional comma-separated field mask in camelCase
+                (e.g., 'displayName,conversationFilter,annotatorSelector,active').
+
+        Returns:
+            A dictionary representing the updated `AnalysisRule` resource.
+        """
+        short_id = self._normalize_rule_id(rule_id)
+        endpoint = f"{self._rules_endpoint}/{short_id}"
+        params = {"updateMask": update_mask} if update_mask else None
+        return self._make_request(
+            endpoint=endpoint,
+            method=base.Methods.PATCH,
+            payload=rule,
+            params=params,
+        )
+
+    def delete_rule(
+        self,
+        rule_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Deletes a specific analysis rule.
+
+        Args:
+            rule_id: The ID or resource name of the analysis rule to delete.
+
+        Returns:
+            An empty dictionary or response payload upon successful deletion.
+        """
+        short_id = self._normalize_rule_id(rule_id)
+        endpoint = f"{self._rules_endpoint}/{short_id}"
+        return self._make_request(
+            endpoint=endpoint,
+            method=base.Methods.DELETE,
+            payload={},
+        )

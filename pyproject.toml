@@ -81,6 +81,10 @@ ignore_missing_imports = true
 pythonpath = [
   "src",
 ]
+testpaths = [
+  "tests/unit",
+]
+addopts = "--ignore=tests/unit/insight_refinements"
 
 [tool.setuptools.package-data]
 "cxidk.workflow.utils.schemas" = ["*.json"]

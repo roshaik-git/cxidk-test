@@ -210,3 +210,34 @@ class TestRequest:
             timeout=60,
         )
         assert response == {"status": "created"}
+
+    @patch("cxidk.core.base.requests")
+    def test_make_patch_request(
+        self, mock_requests: MagicMock, mock_auth: MagicMock
+    ) -> None:
+        """Test a successful PATCH request with updateMask params."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = '{"status": "updated"}'
+        mock_response.json.return_value = {"status": "updated"}
+        mock_requests.patch.return_value = mock_response
+
+        req = Request(
+            project_id=self.PROJECT_ID, location=self.LOCATION, auth=mock_auth
+        )
+        payload: Dict[str, Any] = {"displayName": "Updated"}
+        response = req.make(
+            "dashboards/d1",
+            Methods.PATCH,
+            payload,
+            params={"updateMask": "displayName"},
+        )
+
+        mock_requests.patch.assert_called_once_with(
+            "dashboards/d1",
+            json=payload,
+            params={"updateMask": "displayName"},
+            headers={"Authorization": "Bearer fake-token"},
+            timeout=60,
+        )
+        assert response == {"status": "updated"}
